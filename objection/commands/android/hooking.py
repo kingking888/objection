@@ -132,11 +132,11 @@ def watch_class_method(args: list) -> None:
         return
 
     fully_qualified_class = args[0]
-    overload_filter = args[1] if '--' not in args[1] else None
+    overload_filter = args[1].replace(' ', '') if '--' not in args[1] else None
 
     api = state_connection.get_api()
     api.android_hooking_watch_method(fully_qualified_class,
-                                     overload_filter.replace(' ', ''),
+                                     overload_filter,
                                      _should_dump_args(args),
                                      _should_dump_backtrace(args),
                                      _should_dump_return_value(args))
@@ -233,12 +233,12 @@ def set_method_return_value(args: list = None) -> None:
     class_name = args[0].replace('\'', '"')  # fun!
 
     # check if we got an overload
-    overload_filter = args[1] if len(args) == 3 else None
+    overload_filter = args[1].replace(' ', '') if len(args) == 3 else None
     retval = True if _string_is_true(args[-1]) else False
 
     api = state_connection.get_api()
     api.android_hooking_set_method_return(class_name,
-                                          overload_filter.replace(' ', ''),
+                                          overload_filter,
                                           retval)
 
 

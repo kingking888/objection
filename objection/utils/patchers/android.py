@@ -1,13 +1,11 @@
-import itertools
 import lzma
 import os
-import re
 import shlex
 import shutil
 import tempfile
 import xml.etree.ElementTree as ElementTree
-import zipfile
 from subprocess import list2cmdline
+from pkg_resources import parse_version
 
 import click
 import delegator
@@ -191,7 +189,7 @@ class AndroidPatcher(BasePlatformPatcher):
             'installation': 'apt install adb (Kali Linux); brew install adb (macOS)'
         },
         'jarsigner': {
-            'installation': 'apt install default-jre (Linux); brew cask install java (macOS)'
+            'installation': 'apt install default-jdk (Linux); brew cask install java (macOS)'
         },
         'apktool': {
             'installation': 'apt install apktool (Kali Linux)'
@@ -214,6 +212,45 @@ class AndroidPatcher(BasePlatformPatcher):
         self.keystore = os.path.join(os.path.abspath(os.path.dirname(__file__)), '../assets', 'objection.jks')
         self.netsec_config = os.path.join(os.path.abspath(os.path.dirname(__file__)), '../assets',
                                           'network_security_config.xml')
+
+    def is_apktool_ready(self) -> bool:
+        """
+            Check if apktool is ready for use.
+
+            :return:bool
+        """
+
+        min_version = '2.4.1'  # the version of apktool we require
+
+        o = delegator.run(list2cmdline([
+            self.required_commands['apktool']['location'],
+            '-version',
+        ]), timeout=self.command_run_timeout).out.strip()
+
+        if len(o) == 0:
+            click.secho('Unable to determine apktool version. Is it installed')
+            return False
+
+        click.secho('Detected apktool version as: ' + o, dim=True)
+
+        # ensure we have at least apktool MIN_VERSION
+        if parse_version(o) < parse_version(min_version):
+            click.secho('apktool version should be at least ' + min_version, fg='red', bold=True)
+            click.secho('Please see the following URL for more information: '
+                        'https://github.com/sensepost/objection/wiki/Apktool-Upgrades', fg='yellow')
+            return False
+
+        # run clean-frameworks-dir
+        click.secho('Running apktool empty-framework-dir...', dim=True)
+        o = delegator.run(list2cmdline([
+            self.required_commands['apktool']['location'],
+            'empty-framework-dir',
+        ]), timeout=self.command_run_timeout).out.strip()
+
+        if len(o) > 0:
+            click.secho(o, fg='yellow', dim=True)
+
+        return True
 
     def set_apk_source(self, source: str):
         """
@@ -737,13 +774,14 @@ class AndroidPatcher(BasePlatformPatcher):
         with open(activity_path, 'w') as f:
             f.write(''.join(patched_smali))
 
-    def add_gadget_to_apk(self, architecture: str, gadget_source: str):
+    def add_gadget_to_apk(self, architecture: str, gadget_source: str, gadget_config: str):
         """
             Copies a frida gadget for a specific architecture to
             an extracted APK's lib path.
 
             :param architecture:
             :param gadget_source:
+            :param gadget_config:
             :return:
         """
 
@@ -757,6 +795,10 @@ class AndroidPatcher(BasePlatformPatcher):
         click.secho('Copying Frida gadget to libs path...', fg='green', dim=True)
         shutil.copyfile(gadget_source, os.path.join(libs_path, 'libfrida-gadget.so'))
 
+        if gadget_config:
+            click.secho('Adding a gadget configuration file...', fg='green')
+            shutil.copyfile(gadget_config, os.path.join(libs_path, 'libfrida-gadget.config.so'))
+
     def build_new_apk(self, use_aapt2: bool = False):
         """
             Build a new .apk with the frida-gadget patched in.
@@ -765,43 +807,21 @@ class AndroidPatcher(BasePlatformPatcher):
         """
 
         click.secho('Rebuilding the APK with the frida-gadget loaded...', fg='green', dim=True)
-        o = delegator.run(list2cmdline([
-            self.required_commands['apktool']['location'],
-            'build',
-            self.apk_temp_directory,
-        ] + (['--use-aapt2'] if use_aapt2 else []) + [
-            '-o',
-            self.apk_temp_frida_patched
-        ]), timeout=self.command_run_timeout)
+        o = delegator.run(
+            list2cmdline([self.required_commands['apktool']['location'],
+                          'build',
+                          self.apk_temp_directory,
+                          ] + (['--use-aapt2'] if use_aapt2 else []) + [
+                             '-o',
+                             self.apk_temp_frida_patched
+                         ]), timeout=self.command_run_timeout)
 
         if len(o.err) > 0:
             click.secho(('Rebuilding the APK may have failed. Read the following '
                          'output to determine if apktool actually had an error: \n'), fg='red')
             click.secho(o.err, fg='red')
 
-        self._copy_meta_inf()
         click.secho('Built new APK with injected loadLibrary and frida-gadget', fg='green')
-
-    def _copy_meta_inf(self):
-        meta_inf = os.path.join(self.apk_temp_directory, 'original', 'META-INF')
-        standard_files = re.compile(r'^(?:[A-Z]+\.(?:RSA|SF)|MANIFEST\.MF)$')
-        extra_names = list(itertools.filterfalse(standard_files.match, os.listdir(meta_inf)))
-        if extra_names:
-            click.secho('Appending {0} extra entries in META-INF to the APK...'.format(len(extra_names)))
-            with zipfile.ZipFile(self.apk_temp_frida_patched, 'a', zipfile.ZIP_DEFLATED) as apk:
-                for extra_name in extra_names:
-                    full_path = os.path.join(meta_inf, extra_name)
-                    if os.path.isdir(full_path):
-                        prefix_len = len(full_path) + 1 # trailing '/'
-                        for dirpath, _, filenames in os.walk(full_path):
-                            for filename in filenames:
-                                src_name = os.path.join(dirpath, filename)
-                                dest_name = 'META-INF/{dirname}/{path}'.format(
-                                        dirname=extra_name,
-                                        path=src_name[prefix_len:].replace(os.sep, '/'))
-                                apk.write(src_name, dest_name)
-                    else:
-                        apk.write(full_path, 'META-INF/' + extra_name)
 
     def zipalign_apk(self):
         """

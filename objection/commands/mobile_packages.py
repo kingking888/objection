@@ -11,7 +11,7 @@ from ..utils.patchers.ios import IosGadget, IosPatcher
 
 
 def patch_ios_ipa(source: str, codesign_signature: str, provision_file: str, binary_name: str,
-                  skip_cleanup: bool, gadget_version: str = None, pause: bool = False) -> None:
+                  skip_cleanup: bool, unzip_unicode: bool, gadget_version: str = None, pause: bool = False) -> None:
     """
         Patches an iOS IPA by extracting, injecting the Frida dylib,
         codesigning the dylib and app executable and rezipping the IPA.
@@ -21,7 +21,9 @@ def patch_ios_ipa(source: str, codesign_signature: str, provision_file: str, bin
         :param provision_file:
         :param binary_name:
         :param skip_cleanup:
+        :param unzip_unicode:
         :param gadget_version:
+        :param pause:
         :return:
     """
 
@@ -63,7 +65,7 @@ def patch_ios_ipa(source: str, codesign_signature: str, provision_file: str, bin
         return
 
     patcher.set_provsioning_profile(provision_file=provision_file)
-    patcher.extract_ipa(ipa_source=source)
+    patcher.extract_ipa(unzip_unicode, ipa_source=source)
     patcher.set_application_binary(binary=binary_name)
     patcher.patch_and_codesign_binary(
         frida_gadget=ios_gadget.get_gadget_path(), codesign_signature=codesign_signature)
@@ -88,7 +90,7 @@ def patch_ios_ipa(source: str, codesign_signature: str, provision_file: str, bin
 def patch_android_apk(source: str, architecture: str, pause: bool, skip_cleanup: bool = True,
                       enable_debug: bool = True, gadget_version: str = None, skip_resources: bool = False,
                       network_security_config: bool = False, target_class: str = None,
-                      use_aapt2: bool = False) -> None:
+                      use_aapt2: bool = False, gadget_config: str = None, script_source: str = None) -> None:
     """
         Patches an Android APK by extracting, patching SMALI, repackaging
         and signing a new APK.
@@ -103,6 +105,8 @@ def patch_android_apk(source: str, architecture: str, pause: bool, skip_cleanup:
         :param network_security_config:
         :param target_class:
         :param use_aapt2:
+        :param gadget_config:
+        :param script_source:
 
         :return:
     """
@@ -127,6 +131,11 @@ def patch_android_apk(source: str, architecture: str, pause: bool, skip_cleanup:
 
     # set the architecture we are interested in
     android_gadget.set_architecture(architecture)
+
+    # check the gadget config flags
+    if script_source and not gadget_config:
+        click.secho('A script source was specified but no gadget configuration was set.', fg='red', bold=True)
+        return
 
     # check if a gadget version was specified. if not, get the latest one.
     if gadget_version is not None:
@@ -157,6 +166,11 @@ def patch_android_apk(source: str, architecture: str, pause: bool, skip_cleanup:
 
     patcher = AndroidPatcher(skip_cleanup=skip_cleanup)
 
+    # ensure we have the latest apk-tool and run the
+    if not patcher.is_apktool_ready():
+        click.secho('apktool is not ready for use', fg='red', bold=True)
+        return
+
     # ensure that we have all of the commandline requirements
     if not patcher.are_requirements_met():
         return
@@ -173,7 +187,12 @@ def patch_android_apk(source: str, architecture: str, pause: bool, skip_cleanup:
         patcher.add_network_security_config()
 
     patcher.inject_load_library(target_class=target_class)
-    patcher.add_gadget_to_apk(architecture, android_gadget.get_frida_library_path())
+    patcher.add_gadget_to_apk(architecture, android_gadget.get_frida_library_path(), gadget_config)
+
+    if script_source:
+        click.secho('Copying over a custom script to use with the gadget config.', fg='green')
+        shutil.copyfile(script_source,
+                        os.path.join(patcher.apk_temp_directory, 'lib', architecture, 'libfrida-gadget.script.so'))
 
     # if we are required to pause, do that.
     if pause:

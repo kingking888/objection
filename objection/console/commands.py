@@ -415,6 +415,10 @@ COMMANDS = {
                     'clear': {
                         'meta': 'Clears the Android KeyStore',
                         'exec': keystore.clear
+                    },
+                    'watch': {
+                        'meta': 'Watches usage of the Android keystore',
+                        'exec': keystore.watch
                     }
                 }
             },
@@ -624,6 +628,7 @@ COMMANDS = {
                     },
                     'evaluate': {
                         'meta': 'Evaluate JavaScript on objects on the iOS heap',
+                        'flags': ['--inline'],
                         'exec': ios_heap.evaluate
                     }
                 }
