@@ -1,23 +1,31 @@
-import { binary } from "../ios/binary";
-import { binarycookies } from "../ios/binarycookies";
-import { bundles } from "../ios/bundles";
-import { credentialstorage } from "../ios/credentialstorage";
-import { iosfilesystem } from "../ios/filesystem";
-import { heap } from "../ios/heap";
-import { hooking } from "../ios/hooking";
-import { iosjailbreak } from "../ios/jailbreak";
-import { ioskeychain } from "../ios/keychain";
+import * as binary from "../ios/binary";
+import * as binarycookies from "../ios/binarycookies";
+import * as bundles from "../ios/bundles";
+import * as credentialstorage from "../ios/credentialstorage";
+import * as iosfilesystem from "../ios/filesystem";
+import * as heap from "../ios/heap";
+import * as hooking from "../ios/hooking";
+import * as ioscrypto from "../ios/crypto";
+import * as iosjailbreak from "../ios/jailbreak";
+import * as ioskeychain from "../ios/keychain";
+import * as nsuserdefaults from "../ios/nsuserdefaults";
+import * as pasteboard from "../ios/pasteboard";
+import * as sslpinning from "../ios/pinning";
+import * as plist from "../ios/plist";
+import * as userinterface from "../ios/userinterface";
+
 import { BundleType } from "../ios/lib/constants";
-import {
-  IBinaryModuleDictionary, ICredential, IFramework,
-  IHeapObject, IIosCookie, IIosFileSystem, IKeychainItem,
-} from "../ios/lib/interfaces";
 import { NSUserDefaults } from "../ios/lib/types";
-import { nsuserdefaults } from "../ios/nsuserdefaults";
-import { pasteboard } from "../ios/pasteboard";
-import { sslpinning } from "../ios/pinning";
-import { plist } from "../ios/plist";
-import { userinterface } from "../ios/userinterface";
+import {
+  IBinaryModuleDictionary,
+  ICredential,
+  IFramework,
+  IHeapObject,
+  IIosCookie,
+  IIosFileSystem,
+  IKeychainItem,
+} from "../ios/lib/interfaces";
+
 
 export const ios = {
   // binary
@@ -52,12 +60,15 @@ export const ios = {
   iosHookingGetClassMethods: (className: string, includeParents: boolean): string[] =>
     hooking.getClassMethods(className, includeParents),
   iosHookingGetClasses: () => hooking.getClasses(),
-  iosHookingSearchMethods: (partial: string): string[] => hooking.searchMethods(partial),
   iosHookingSetReturnValue: (selector: string, returnVal: boolean): void =>
     hooking.setMethodReturn(selector, returnVal),
-  iosHookingWatchClass: (clazz: string, parents: boolean): void => hooking.watchClass(clazz, parents),
-  iosHookingWatchMethod: (selector: string, dargs: boolean, dbt: boolean, dret: boolean): void =>
-    hooking.watchMethod(selector, dargs, dbt, dret),
+  iosHookingWatch: (pattern: string, dargs: boolean, dbt: boolean, dret: boolean, dparents: boolean) =>
+    hooking.watch(pattern, dargs, dbt, dret, dparents),
+  iosHookingSearch: (pattern: string): ApiResolverMatch[] =>
+    hooking.search(pattern),
+
+  // ios crypto monitoring
+  iosMonitorCryptoEnable: (): void => ioscrypto.monitor(),
 
   // jailbreak detection
   iosJailbreakDisable: (): void => iosjailbreak.disable(),
@@ -83,7 +94,8 @@ export const ios = {
   iosBundlesGetFrameworks: (): IFramework[] => bundles.getBundles(BundleType.NSBundleFramework),
 
   // ios keychain
-  iosKeychainAdd: (key: string, data: string): boolean => ioskeychain.add(key, data),
+  iosKeychainAdd: (account: string, service: string, data: string): boolean =>
+    ioskeychain.add(account, service, data),
   iosKeychainEmpty: (): void => ioskeychain.empty(),
   iosKeychainList: (smartDecode): IKeychainItem[] => ioskeychain.list(smartDecode),
   iosKeychainListRaw: (): void => ioskeychain.listRaw(),

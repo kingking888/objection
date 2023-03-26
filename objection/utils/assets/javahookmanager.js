@@ -2,7 +2,7 @@
 //
 // Edit the example below the HookManager class to suit your
 // needs and then run with:
-//  frida -U "App Name" --runtime=v8 -l objchookmanager.js
+//  frida -U "App Name" -l objchookmanager.js
 //
 // Generated using objection:
 //  https://github.com/sensepost/objection
@@ -62,7 +62,7 @@ class JavaHookManager {
   validMethod(method) {
     if (!this.available_methods.includes(method)) {
       return false;
-    } 
+    }
     return true;
   }
 
@@ -74,11 +74,11 @@ class JavaHookManager {
       return true;
     } else {
       return false;
-    }; 
+    };
   }
 
   hook(m, f = null) {
-    if (!this.validMethod(m)) { 
+    if (!this.validMethod(m)) {
       this.print(`Method ${m} is not valid for this class.`);
       return;
     }
@@ -92,11 +92,11 @@ class JavaHookManager {
     var r = [];
     this.target[m].overloads.forEach(overload => {
       if (f == null) {
-        overload.replacement = function() {
+        overload.replacement = function () {
           return overload.apply(this, arguments);
         }
       } else {
-        overload.implementation = function() {
+        overload.implementation = function () {
           var ret = overload.apply(this, arguments);
           return f(arguments, ret);
         }
@@ -105,11 +105,11 @@ class JavaHookManager {
       r.push(overload);
     });
 
-    this.hooking.push({method: m, replacements: r});
+    this.hooking.push({ method: m, replacements: r });
   }
 
   unhook(method) {
-    if (!this.validMethod(method)) { 
+    if (!this.validMethod(method)) {
       this.print(`Method ${method} is not valid for this class.`);
       return;
     }

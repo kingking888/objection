@@ -11,11 +11,14 @@ from ..utils.patchers.ios import IosGadget, IosPatcher
 
 
 def patch_ios_ipa(source: str, codesign_signature: str, provision_file: str, binary_name: str,
-                  skip_cleanup: bool, unzip_unicode: bool, gadget_version: str = None, pause: bool = False) -> None:
+                  skip_cleanup: bool, unzip_unicode: bool, gadget_version: str = None,
+                  pause: bool = False, gadget_config: str = None, script_source: str = None,
+                  bundle_id: str = None) -> None:
     """
         Patches an iOS IPA by extracting, injecting the Frida dylib,
         codesigning the dylib and app executable and rezipping the IPA.
 
+        :param bundle_id:
         :param source:
         :param codesign_signature:
         :param provision_file:
@@ -24,6 +27,8 @@ def patch_ios_ipa(source: str, codesign_signature: str, provision_file: str, bin
         :param unzip_unicode:
         :param gadget_version:
         :param pause:
+        :param gadget_config:
+        :param script_source:
         :return:
     """
 
@@ -64,11 +69,15 @@ def patch_ios_ipa(source: str, codesign_signature: str, provision_file: str, bin
     if not patcher.are_requirements_met():
         return
 
-    patcher.set_provsioning_profile(provision_file=provision_file)
+    patcher.set_provsioning_profile(provision_file=provision_file, bundle_id=bundle_id)
     patcher.extract_ipa(unzip_unicode, ipa_source=source)
     patcher.set_application_binary(binary=binary_name)
     patcher.patch_and_codesign_binary(
-        frida_gadget=ios_gadget.get_gadget_path(), codesign_signature=codesign_signature)
+        frida_gadget=ios_gadget.get_gadget_path(), codesign_signature=codesign_signature, gadget_config=gadget_config)
+
+    if script_source:
+        click.secho('Copying over a custom script to use with the gadget config.', fg='green')
+        shutil.copyfile(script_source, os.path.join(patcher.app_folder, 'Frameworks', script_source))
 
     # give a chance to make any last minute modifications if needed
     if pause:
@@ -90,7 +99,8 @@ def patch_ios_ipa(source: str, codesign_signature: str, provision_file: str, bin
 def patch_android_apk(source: str, architecture: str, pause: bool, skip_cleanup: bool = True,
                       enable_debug: bool = True, gadget_version: str = None, skip_resources: bool = False,
                       network_security_config: bool = False, target_class: str = None,
-                      use_aapt2: bool = False, gadget_config: str = None, script_source: str = None) -> None:
+                      use_aapt2: bool = False, gadget_config: str = None, script_source: str = None,
+                      ignore_nativelibs: bool = True, manifest: str = None) -> None:
     """
         Patches an Android APK by extracting, patching SMALI, repackaging
         and signing a new APK.
@@ -107,6 +117,7 @@ def patch_android_apk(source: str, architecture: str, pause: bool, skip_cleanup:
         :param use_aapt2:
         :param gadget_config:
         :param script_source:
+        :param manifest:
 
         :return:
     """
@@ -164,21 +175,24 @@ def patch_android_apk(source: str, architecture: str, pause: bool, skip_cleanup:
 
     click.secho('Patcher will be using Gadget version: {0}'.format(github_version), fg='green')
 
-    patcher = AndroidPatcher(skip_cleanup=skip_cleanup)
+    patcher = AndroidPatcher(skip_cleanup=skip_cleanup, skip_resources=skip_resources, manifest=manifest)
+
+    # ensure that we have all of the commandline requirements
+    if not patcher.are_requirements_met():
+        return
 
     # ensure we have the latest apk-tool and run the
     if not patcher.is_apktool_ready():
         click.secho('apktool is not ready for use', fg='red', bold=True)
         return
 
-    # ensure that we have all of the commandline requirements
-    if not patcher.are_requirements_met():
-        return
-
     # work on patching the APK
     patcher.set_apk_source(source=source)
-    patcher.unpack_apk(skip_resources=skip_resources)
-    patcher.inject_internet_permission(skip_resources=skip_resources)
+    patcher.unpack_apk()
+    patcher.inject_internet_permission()
+
+    if not ignore_nativelibs:
+        patcher.extract_native_libs_patch()
 
     if enable_debug:
         patcher.flip_debug_flag_to_true()
@@ -192,7 +206,8 @@ def patch_android_apk(source: str, architecture: str, pause: bool, skip_cleanup:
     if script_source:
         click.secho('Copying over a custom script to use with the gadget config.', fg='green')
         shutil.copyfile(script_source,
-                        os.path.join(patcher.apk_temp_directory, 'lib', architecture, 'libfrida-gadget.script.so'))
+                        os.path.join(patcher.apk_temp_directory, 'lib', architecture,
+                                     'libfrida-gadget.script.so'))
 
     # if we are required to pause, do that.
     if pause:
@@ -204,8 +219,36 @@ def patch_android_apk(source: str, architecture: str, pause: bool, skip_cleanup:
         input('Press ENTER to continue...')
 
     patcher.build_new_apk(use_aapt2=use_aapt2)
-    patcher.sign_apk()
     patcher.zipalign_apk()
+    patcher.sign_apk()
+
+    # woohoo, get the APK!
+    destination = source.replace('.apk', '.objection.apk')
+
+    click.secho(
+        'Copying final apk from {0} to {1} in current directory...'.format(patcher.get_patched_apk_path(), destination))
+    shutil.copyfile(patcher.get_patched_apk_path(), os.path.join(os.path.abspath('.'), destination))
+
+
+def sign_android_apk(source: str, skip_cleanup: bool = True) -> None:
+    """
+        Zipaligns and signs an Android APK with the objection key.
+
+        :param source:
+        :param skip_cleanup:
+
+        :return:
+    """
+
+    patcher = AndroidPatcher(skip_cleanup=skip_cleanup)
+
+    # ensure that we have all of the commandline requirements
+    if not patcher.are_requirements_met():
+        return
+
+    patcher.set_apk_source(source=source)
+    patcher.zipalign_apk()
+    patcher.sign_apk()
 
     # woohoo, get the APK!
     destination = source.replace('.apk', '.objection.apk')

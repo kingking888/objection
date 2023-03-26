@@ -35,9 +35,23 @@ def frida_environment(args: list = None) -> None:
         ('Process Platform', frida_env['platform']),
         ('Debugger Attached', frida_env['debugger']),
         ('Script Runtime', frida_env['runtime']),
-        ('Script Filename', frida_env['filename']),
         ('Frida Heap Size', sizeof_fmt(frida_env['heap']))
     ]))
+
+
+def ping(args: list = None) -> None:
+    """
+        Pings the agent.
+
+        :param args:
+        :return:
+    """
+
+    agent = state_connection.get_api()
+    if agent.ping():
+        click.secho('The agent responds ok!', fg='green')
+    else:
+        click.secho('The agent did not respond ok!', fg='red')
 
 
 def load_background(args: list = None) -> None:

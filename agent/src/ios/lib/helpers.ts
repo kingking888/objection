@@ -1,7 +1,10 @@
 import { NSUTF8StringEncoding } from "./constants";
-import { NSBundle, NSDictionary, NSFileManager, NSString as NSStringType } from "./types";
-
-const NSString = ObjC.classes.NSString;
+import {
+  NSBundle,
+  NSDictionary,
+  NSFileManager,
+  NSString as NSStringType
+} from "./types";
 
 // Attempt to unarchive data. Returning a string of `` indicates that the
 // unarchiving failed.
@@ -104,7 +107,7 @@ export const bytesToUTF8 = (data: any): string => {
     return data.toString();
   }
 
-  const s: NSStringType = NSString.alloc().initWithBytes_length_encoding_(
+  const s: NSStringType = ObjC.classes.NSString.alloc().initWithBytes_length_encoding_(
     data.bytes(), data.length(), NSUTF8StringEncoding);
 
   if (s) {
@@ -131,4 +134,29 @@ export const getNSFileManager = (): NSFileManager => {
 export const getNSMainBundle = (): NSBundle => {
   const bundle = ObjC.classes.NSBundle;
   return bundle.mainBundle();
+};
+
+export const arrayBufferToHex = (arrayBuffer): string => {
+  if (typeof arrayBuffer !== 'object' || arrayBuffer === null || typeof arrayBuffer.byteLength !== 'number') {
+    throw new TypeError('Expected input to be an ArrayBuffer');
+  }
+
+  const buffer = new Uint8Array(arrayBuffer);
+  let result = '';
+  let value;
+
+  for (const byte of buffer) {
+    value = byte.toString(16);
+    result += (value.length === 1 ? '0' + value : value);
+  }
+
+  return result;
+};
+
+export const hexToString = (hexx): string => {
+  const hex = hexx.toString(); // force conversion
+  let str = '';
+  for (let i = 0; (i < hex.length && hex.substr(i, 2) !== '00'); i += 2)
+    str += String.fromCharCode(parseInt(hex.substr(i, 2), 16));
+  return str;
 };

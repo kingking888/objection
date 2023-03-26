@@ -1,5 +1,6 @@
-import os
 import json
+import os
+from typing import List
 
 import click
 from tabulate import tabulate
@@ -7,6 +8,8 @@ from tabulate import tabulate
 from objection.state.connection import state_connection
 from ..utils.helpers import clean_argument_flags
 from ..utils.helpers import sizeof_fmt, pretty_concat
+
+BLOCK_SIZE = 40960000
 
 
 def _is_string_input(args: list) -> bool:
@@ -42,6 +45,34 @@ def _should_output_json(args: list) -> bool:
     """
 
     return len(args) > 0 and '--json' in args
+
+
+def _get_chunks(addr: int, size: int, block_size: int = BLOCK_SIZE) -> List:
+    """
+        Determine chunks of
+
+        :param addr:
+        :param size:
+        :param block_size:
+        :return:
+    """
+
+    if size < block_size:
+        return [(addr, size)]
+
+    block_count = size // block_size
+    extra_block = size % block_size
+    current_address = addr
+    ranges = []
+
+    for i in range(block_count):
+        ranges.append((current_address, block_size))
+        current_address += block_size
+
+    if extra_block != 0:
+        ranges.append((current_address, extra_block))
+
+    return ranges
 
 
 # TODO: Dump memory on hooked methods.
@@ -84,15 +115,19 @@ def dump_all(args: list) -> None:
 
     with click.progressbar(ranges) as bar:
         for image in bar:
+            dump = bytearray()
             bar.label = 'Dumping {0} from base: {1}'.format(sizeof_fmt(image['size']), hex(int(image['base'], 16)))
 
             # catch and exception thrown while dumping.
             # this could for a few reasons like if the protection
             # changes or the range is reallocated
             try:
-                # grab the (size) bytes starting at the (base_address)
-                dump = api.memory_dump(int(image['base'], 16), image['size'])
-            except Exception:
+                # grab the (size) bytes starting at the (base_address) in chunks of BLOCK_SIZE
+                chunks = _get_chunks(int(image['base'], 16), int(image['size']), BLOCK_SIZE)
+                for chunk in chunks:
+                    dump.extend(bytearray(api.memory_dump(chunk[0], chunk[1])))
+
+            except Exception as e:
                 continue
 
             # append the results to the destination file
@@ -129,7 +164,12 @@ def dump_from_base(args: list) -> None:
                 fg='green', dim=True)
 
     api = state_connection.get_api()
-    dump = api.memory_dump(int(base_address, 16), int(memory_size))
+
+    # iirc, if you don't cast the return type to a bytearray it uses the sizeof(int) per cell, which is massive
+    dump = bytearray()
+    chunks = _get_chunks(int(base_address, 16), int(memory_size), BLOCK_SIZE)
+    for chunk in chunks:
+        dump.extend(bytearray(api.memory_dump(chunk[0], chunk[1])))
 
     # append the results to the destination file
     with open(destination, 'wb') as f:

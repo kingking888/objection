@@ -1,8 +1,32 @@
+import json
+from typing import Optional
+
 import click
-import frida
 
 from objection.state.connection import state_connection
 from objection.utils.helpers import clean_argument_flags
+
+
+def _is_pattern_or_constant(s: str) -> bool:
+    """
+        Check if a provided pattern matches "CLASS!METHOD"
+
+        :param s:
+        :return:
+    """
+
+    # No pattern case
+    if "!" not in s:
+        return True
+
+    # Check if CLASS and METHOD is defined at all
+    parts = s.split('!')
+    if len(parts) != 2:
+        return False
+    elif len(parts[0]) == 0 or len(parts[1]) == 0:
+        return False
+
+    return True
 
 
 def _string_is_true(s: str) -> bool:
@@ -16,7 +40,7 @@ def _string_is_true(s: str) -> bool:
     return s.lower() in ('true', 'yes')
 
 
-def _should_dump_backtrace(args: list) -> bool:
+def _should_dump_backtrace(args: list = None) -> bool:
     """
         Check if --dump-backtrace is part of the arguments.
 
@@ -27,7 +51,7 @@ def _should_dump_backtrace(args: list) -> bool:
     return '--dump-backtrace' in args
 
 
-def _should_dump_args(args: list) -> bool:
+def _should_dump_args(args: list = None) -> bool:
     """
         Check if --dump-args is part of the arguments.
 
@@ -38,7 +62,7 @@ def _should_dump_args(args: list) -> bool:
     return '--dump-args' in args
 
 
-def _should_dump_return_value(args: list) -> bool:
+def _should_dump_return_value(args: list = None) -> bool:
     """
         Check if --dump-return is part of the arguments.
 
@@ -49,11 +73,68 @@ def _should_dump_return_value(args: list) -> bool:
     return '--dump-return' in args
 
 
-def show_android_classes(args: list = None) -> None:
+def _should_dump_json(args: list) -> bool:
     """
-        Show the currently loaded classes.
+        Check if --json is part of the arguments.
 
         :param args:
+        :return:
+    """
+
+    return '--json' in args
+
+
+def _should_be_quiet(args: list) -> bool:
+    """
+        Check if --quiet is part of the arguments.
+
+        :param args:
+        :return:
+    """
+
+    return '--quiet' in args
+
+
+def _should_print_only_classes(args: list = None) -> bool:
+    """
+        Check if --only-classes is part of the arguments.
+
+        :param args:
+        :return:
+    """
+
+    return '--only-classes' in args
+
+
+def _get_flag_value(flag: str, args: list) -> Optional[str]:
+    """
+        Gets the value for a flag
+
+        :param flag:
+        :param args:
+        :return:
+    """
+
+    target = None
+
+    for i in range(len(args)):
+        if args[i] == flag:
+            target = i + 1
+
+    if target is None:
+        return None
+    elif target < len(args):
+        return args[target]
+    else:
+        return None
+
+
+def show_android_classes(args: list = None) -> None:
+    """
+        Show the currently loaded classes. 
+        Note that Java classes are only loaded when they are used, 
+        so not all classes may be present.
+
         :return:
     """
 
@@ -65,6 +146,23 @@ def show_android_classes(args: list = None) -> None:
         click.secho(class_name)
 
     click.secho('\nFound {0} classes'.format(len(classes)), bold=True)
+
+
+def show_android_class_loaders(args: list = None) -> None:
+    """
+        Show the currently registered class loaders.
+
+        :return:
+    """
+
+    api = state_connection.get_api()
+    loaders = api.android_hooking_get_class_loaders()
+
+    # print the enumerated classes
+    for loader in sorted(loaders):
+        click.secho('* {0}'.format(loader))
+
+    click.secho('\nFound {0} class loaders'.format(len(loaders)), bold=True)
 
 
 def show_android_class_methods(args: list = None) -> None:
@@ -91,64 +189,129 @@ def show_android_class_methods(args: list = None) -> None:
     click.secho('\nFound {0} method(s)'.format(len(methods)), bold=True)
 
 
-def watch_class(args: list) -> None:
+def notify(args: list = None) -> None:
     """
-        Watches for invocations of all methods in an Android
-        Java class. All overloads for methods found are also watched.
+        Notify when a class becomes available.
+
+        :param args:
+        :return:
+    """
+
+    if len(clean_argument_flags(args)) <= 0:
+        click.secho('Usage: android hooking notify <pattern>', bold=True)
+        return
+
+    query = args[0]
+    if not _is_pattern_or_constant(query):
+        click.secho('Incorrect query syntax, please use <class>!<method> or just the class name', fg='red')
+        return
+
+    api = state_connection.get_api()
+    api.android_hooking_lazy_watch_for_pattern(query)
+
+
+def watch(args: list = None) -> None:
+    """
+        Hook functions and print useful information when they are called.
 
         :param args:
         :return:
     """
 
     if len(clean_argument_flags(args)) < 1:
-        click.secho('Usage: android hooking watch class <class> '
-                    '(eg: com.example.test)', bold=True)
+        click.secho('Usage: android hooking watch <package pattern> '
+                    '(eg: com.example.test, *com.example*!*, com.example.test!toString)'
+                    '(optional: --dump-args) '
+                    '(optional: --dump-backtrace) '
+                    '(optional: --dump-return)',
+                    bold=True)
         return
 
-    target_class = args[0]
-
-    api = state_connection.get_api()
-    api.android_hooking_watch_class(target_class)
-
-
-def watch_class_method(args: list) -> None:
-    """
-        Watches for invocations of an Android Java class method.
-        All overloads for the same method are also watched.
-
-        Optionally, this method will dump the watched methods arguments,
-        backtrace as well as return value.
-
-        :param args:
-        :return:
-    """
-
-    if len(clean_argument_flags(args)) < 1:
-        click.secho(('Usage: android hooking watch class_method <fully qualified class method> '
-                     '<optional overload> '
-                     '(optional: --dump-args) '
-                     '(optional: --dump-backtrace) '
-                     '(optional: --dump-return)'), bold=True)
+    query = args[0]
+    if not _is_pattern_or_constant(query):
+        click.secho('Incorrect query syntax, please use <CLASS>!<METHOD>', fg='red')
         return
 
-    fully_qualified_class = args[0]
-    overload_filter = args[1].replace(' ', '') if '--' not in args[1] else None
-
     api = state_connection.get_api()
-    api.android_hooking_watch_method(fully_qualified_class,
-                                     overload_filter,
-                                     _should_dump_args(args),
-                                     _should_dump_backtrace(args),
-                                     _should_dump_return_value(args))
-
+    api.android_hooking_watch(query,
+                              _should_dump_args(args),
+                              _should_dump_backtrace(args),
+                              _should_dump_return_value(args))
     return
+
+
+def search(args: list = None) -> None:
+    """
+        Enumerates the current Android application for classes and methods.
+
+        :param args:
+        :return:
+    """
+
+    if len(clean_argument_flags(args)) <= 0:
+        click.secho('Usage: android hooking search \'<class>!<method>\n\''
+                    '(optional: --json <filename>)'
+                    '(optional: --only-classes)', bold=True)
+        return
+
+    query = args[0]
+
+    if not _is_pattern_or_constant(query):
+        click.secho('Incorrect query syntax, please use <class>!<method>', fg='red')
+        return
+
+    api = state_connection.get_api()
+    results = api.android_hooking_enumerate(query)
+
+    # Only get overloads if this flag is specified, otherwise just enumerating can be kind of slow
+    if _should_dump_json(args):
+        results_json = {
+            'meta': {
+                'runtime': 'java'
+            }
+        }
+
+        for result in results:
+            for _class in result['classes']:
+                loader = result['loader']
+                if loader is not None:
+                    # <instance: java.lang.ClassLoader, $className: dalvik.system.PathClassLoader>
+                    # but we only care about the className
+                    start_index = loader.find('$className: ') + 12
+                    start_part = loader[start_index:]
+                    if start_part.find('>'):
+                        end_index = start_part.find('>')
+                    else:
+                        end_index = start_part.find(' ')
+                    loader = start_part[:end_index]
+
+                _class['overloads'] = api.android_hooking_get_class_methods_overloads(_class['name'], _class['methods'],
+                                                                                      loader)
+
+        target_file = _get_flag_value('--json', args)
+        if target_file:
+            results_json['data'] = results
+            with open(target_file, 'w') as fd:
+                fd.write(json.dumps(results_json))
+                click.secho(f'JSON dumped to file {target_file}', bold=True)
+
+        return
+
+    # just print to the console
+    for result in results:
+        for _class in result['classes']:
+            if _should_print_only_classes(args):
+                print(_class['name'])
+                continue
+
+            for method in _class['methods']:
+                print(f'{_class["name"]}.{method}')
 
 
 def show_registered_broadcast_receivers(args: list = None) -> None:
     """
         Enumerate all registered BroadcastReceivers
 
-        :param args:
         :return:
     """
 
@@ -165,7 +328,6 @@ def show_registered_services(args: list = None) -> None:
     """
         Enumerate all registered Services
 
-        :param args:
         :return:
     """
 
@@ -182,7 +344,6 @@ def show_registered_activities(args: list = None) -> None:
     """
         Enumerate all registered Activities
 
-        :param args:
         :return:
     """
 
@@ -199,7 +360,6 @@ def get_current_activity(args: list = None) -> None:
     """
         Get the currently active activity
 
-        :param args:
         :return:
     """
 
@@ -240,83 +400,3 @@ def set_method_return_value(args: list = None) -> None:
     api.android_hooking_set_method_return(class_name,
                                           overload_filter,
                                           retval)
-
-
-def search_class(args: list) -> None:
-    """
-        Searches the current Android application for a class.
-
-        :param args:
-        :return:
-    """
-
-    if len(clean_argument_flags(args)) < 1:
-        click.secho('Usage: android hooking search classes <name>', bold=True)
-        return
-
-    search = args[0]
-    found = 0
-
-    api = state_connection.get_api()
-    classes = api.android_hooking_get_classes()
-
-    # print the enumerated classes
-    for class_name in sorted(classes):
-
-        if search.lower() in class_name.lower():
-            click.secho(class_name)
-            found += 1
-
-    click.secho('\nFound {0} classes'.format(found), bold=True)
-
-
-def search_methods(args: list) -> None:
-    """
-        Searches the current Android application for a class method.
-
-        :param args:
-        :return:
-    """
-
-    if len(clean_argument_flags(args)) < 1:
-        click.secho('Usage: android hooking search methods <name> (optional: <package-filter>)', bold=True)
-        return
-
-    search = args[0]
-    class_filter = args[1] if len(clean_argument_flags(args)) > 1 else None
-    found = 0
-
-    if not class_filter:
-        click.secho('Warning, searching all classes may take some time and in some cases, '
-                    'crash the target application.', fg='yellow')
-        if not click.confirm('Continue?'):
-            return
-
-    api = state_connection.get_api()
-
-    # get the classes we have
-    classes = api.android_hooking_get_classes()
-    click.secho('Found {0} classes, searching methods (this may take some time)...'.format(len(classes)), dim=True)
-    if class_filter:
-        click.secho('Filtering classes with {0}'.format(class_filter), dim=True)
-
-    # loop the classes and check the methods
-    for class_name in sorted(classes):
-        if class_filter and class_filter.lower() not in class_name.lower():
-            continue
-
-        try:
-
-            for method in api.android_hooking_get_class_methods(class_name):
-                # get only the raw method, minus returns, throws and args
-                method = method.split('(')[0].split(' ')[-1]
-                if search.lower() in method.lower():
-                    click.secho(method)
-                    found += 1
-
-        except frida.core.RPCException as e:
-            click.secho('Enumerating methods for class \'{0}\' failed with: {1}'.format(class_name, e), fg='red',
-                        dim=True)
-            click.secho('Ignoring error and continuing search...', dim=True)
-
-    click.secho('\nFound {0} methods'.format(found), bold=True)
